@@ -37,6 +37,13 @@ npm run build
 
 ## AI 점수 기준
 
+AI 리뷰는 **GPT → Ollama → Groq** 순서로 설정된 제공자를 호출합니다. 오류 또는 잘못된 리뷰 응답이 발생하면 다음 제공자로 넘어갑니다.
+프로젝트 루트의 `.env.local`에 `OPEN_AI_API_KEY`로 GMS Key를 설정하면 GPT가 1순위로 활성화됩니다. 키는 서버에서만 Bearer 토큰으로 사용합니다.
+`OPEN_AI_REVIEW_MODEL`의 기본값은 `gpt-5.4-mini`, `OPEN_AI_BASE_URL`의 기본값은 `https://gms.ssafy.io/gmsapi/api.openai.com/v1`입니다.
+GMS의 `/chat/completions`로 요청합니다. 다른 OpenAI 호환 서버를 사용하려면 해당 서버의 기본 URL과 지원 모델명을 두 변수에 지정하세요.
+기존 `OLLAMA_API_KEY` / `OLLAMA_REVIEW_MODEL`, `LLM_API_KEY` / `LLM_REVIEW_MODEL`은 대체 제공자 설정으로 유지됩니다.
+환경변수를 바꾼 뒤 개발 서버를 재시작하고, 배포 환경에도 동일하게 등록하세요.
+
 | 항목 | 배점 | 평가 내용 |
 | --- | ---: | --- |
 | 정답성 | 40 | 문제 요구사항, 로직, 경계값 처리 |

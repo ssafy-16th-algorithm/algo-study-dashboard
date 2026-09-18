@@ -26,7 +26,7 @@ function waitForRetry(delay:number,signal?:AbortSignal) {
 async function fetchReview(input:ReviewRequest,signal?:AbortSignal):Promise<Review> {
   signal?.throwIfAborted();
   const timeoutController=new AbortController();
-  const timeout=setTimeout(()=>timeoutController.abort(new DOMException('Review request timed out','TimeoutError')),45_000);
+  const timeout=setTimeout(()=>timeoutController.abort(new DOMException('Review request timed out','TimeoutError')),60_000);
   try {
     const response=await fetch('/api/review',{
       method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input),

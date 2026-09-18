@@ -3,7 +3,7 @@ import type { Review, ReviewIssue, ReviewRequest } from '../../lib/review';
 import { isRetryableStatus, retryAfterSeconds } from '../../lib/review-retry';
 import { normalizeReviewScore, REVIEW_VERSION, SCORE_RUBRIC } from '../../lib/review-score';
 
-export const maxDuration = 40;
+export const maxDuration = 55;
 
 const requestWindows = new Map<string,{count:number;resetAt:number}>();
 
@@ -104,13 +104,16 @@ function alignReviewLines(review:Review,code:string) {
 }
 
 export async function POST(request:Request) {
+  const openaiApiKey=process.env.OPEN_AI_API_KEY?.trim();
+  const openaiModel=process.env.OPEN_AI_REVIEW_MODEL?.trim() || 'gpt-5.4-mini';
+  const openaiBaseUrl=(process.env.OPEN_AI_BASE_URL?.trim() || 'https://gms.ssafy.io/gmsapi/api.openai.com/v1').replace(/\/+$/,'');
   const ollamaApiKey=process.env.OLLAMA_API_KEY?.trim();
   const groqApiKey=process.env.LLM_API_KEY?.trim();
   const ollamaModel=process.env.OLLAMA_REVIEW_MODEL?.trim();
   const groqModel=process.env.LLM_REVIEW_MODEL?.trim();
   const ollamaConfigured=Boolean(ollamaApiKey && ollamaModel);
   const groqConfigured=Boolean(groqApiKey && groqModel);
-  if (!ollamaConfigured && !groqConfigured) return NextResponse.json({error:'AI 리뷰 API 키와 모델 설정이 필요합니다.',code:'AI_NOT_CONFIGURED',retryable:false},{status:503});
+  if (!openaiApiKey && !ollamaConfigured && !groqConfigured) return NextResponse.json({error:'AI 리뷰 API 키와 모델 설정이 필요합니다.',code:'AI_NOT_CONFIGURED',retryable:false},{status:503});
 
   const clientId = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'anonymous';
   const now = Date.now();
@@ -130,7 +133,8 @@ export async function POST(request:Request) {
     return NextResponse.json({error:'리뷰할 코드가 없거나 너무 깁니다.'},{status:400});
   }
 
-  const key = await sha256(JSON.stringify({version:REVIEW_VERSION,problem:input.problem,language:input.language,code}));
+  const providerConfig=[openaiApiKey ? ['openai',openaiModel,openaiBaseUrl] : null,ollamaConfigured ? ['ollama',ollamaModel] : null,groqConfigured ? ['groq',groqModel,process.env.LLM_BASE_URL] : null];
+  const key = await sha256(JSON.stringify({version:REVIEW_VERSION,providerConfig,problem:input.problem,language:input.language,code}));
   const cacheUrl = new URL(`https://algorithm-review-cache.internal/${key}`);
   const workerCache = typeof globalThis.caches === 'undefined'
     ? undefined
@@ -186,6 +190,10 @@ export async function POST(request:Request) {
       response_format:{type:'json_object'},
     };
   const providers = [
+    ...(openaiApiKey ? [{
+      name:'openai',model:openaiModel,url:`${openaiBaseUrl}/chat/completions`,apiKey:openaiApiKey,
+      body:{model:openaiModel,messages:groqRequest.messages,max_completion_tokens:1800,response_format:{type:'json_object'}},
+    }] : []),
     ...(ollamaConfigured ? [{
       name:'ollama',model:ollamaModel!,url:'https://ollama.com/api/chat',apiKey:ollamaApiKey!,
       body:{model:ollamaModel!,messages:groqRequest.messages,stream:false,think:false,options:{temperature:0,num_predict:1800}},
@@ -231,7 +239,7 @@ export async function POST(request:Request) {
   if (!review) {
     const retryable=failures.some((failure)=>failure.retryable);
     const rateLimited=failures.some((failure)=>failure.status===429);
-    // The next request starts at Ollama again, so respect every provider's cooldown.
+    // The next request starts at the first configured provider again.
     const retryAfter=retryable?Math.max(1,Math.ceil((Math.max(...failures.filter((failure)=>failure.retryable).map((failure)=>failure.retryAt))-Date.now())/1000)):0;
     return NextResponse.json({
       error:!retryable?'AI 모델 설정 또는 요청을 확인해야 합니다.':rateLimited?'AI 사용량 제한으로 리뷰를 잠시 기다려야 합니다.':'AI 서버의 일시적인 오류로 리뷰를 완료하지 못했습니다.',

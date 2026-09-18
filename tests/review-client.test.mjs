@@ -109,7 +109,7 @@ test('times out an API request and can recover on the next attempt', async (t) =
   }, Response.json({ review })]);
   const pending = requestReviewWithRetry(input);
   await flush();
-  t.mock.timers.tick(45_000);
+  t.mock.timers.tick(60_000);
   await flush();
   assert.equal(signal.aborted, true);
   t.mock.timers.tick(2000);

@@ -4,8 +4,8 @@ import { test } from 'node:test';
 import { review } from './fixtures/review.mjs';
 const { POST } = await import('../app/api/review/route.ts');
 let client = 0;
-function setup(t, respond, { groq = true } = {}) {
-  for (const [name, value] of Object.entries({ OLLAMA_API_KEY: 'test', OLLAMA_REVIEW_MODEL: 'test-ollama', LLM_API_KEY: groq ? 'test' : '', LLM_REVIEW_MODEL: groq ? 'test-groq' : '' })) {
+function setup(t, respond, { groq = true, ollama = true, openai = false, openaiBaseUrl = '', openaiModel = '' } = {}) {
+  for (const [name, value] of Object.entries({ OPEN_AI_API_KEY: openai ? 'test-openai' : '', OPEN_AI_BASE_URL: openaiBaseUrl, OPEN_AI_REVIEW_MODEL: openaiModel, OLLAMA_API_KEY: ollama ? 'test' : '', OLLAMA_REVIEW_MODEL: ollama ? 'test-ollama' : '', LLM_API_KEY: groq ? 'test' : '', LLM_REVIEW_MODEL: groq ? 'test-groq' : '' })) {
     const previous = process.env[name];
     process.env[name] = value;
     t.after(() => { if (previous === undefined) delete process.env[name]; else process.env[name] = previous; });
@@ -15,6 +15,51 @@ function setup(t, respond, { groq = true } = {}) {
 function request(ip = `review-test-${++client}`) {
   return new Request('http://localhost/api/review', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-forwarded-for': ip }, body: JSON.stringify({ problem: { title: '테스트' }, code: 'class Main {}' }) });
 }
+
+test('uses GPT first with OpenAI-compatible parameters', async (t) => {
+  const calls = [];
+  setup(t, async (url, init) => {
+    calls.push(url);
+    const body = JSON.parse(init.body);
+    assert.equal(init.headers.Authorization, 'Bearer test-openai');
+    assert.equal(body.model, 'gpt-5.4-mini');
+    assert.equal(body.response_format.type, 'json_object');
+    assert.equal(body.citation_options, undefined);
+    assert.equal(body.tool_choice, undefined);
+    return Response.json({ choices: [{ message: { content: JSON.stringify(review) } }] });
+  }, { openai: true });
+  const response = await POST(request());
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('X-Review-Provider'), 'openai');
+  assert.deepEqual(calls, ['https://gms.ssafy.io/gmsapi/api.openai.com/v1/chat/completions']);
+});
+
+test('supports GPT alone with a custom endpoint and model', async (t) => {
+  let actualUrl;
+  let actualModel;
+  setup(t, async (url, init) => {
+    actualUrl = url;
+    actualModel = JSON.parse(init.body).model;
+    return Response.json({ choices: [{ message: { content: JSON.stringify(review) } }] });
+  }, { openai: true, ollama: false, groq: false, openaiBaseUrl: 'https://gateway.example/v1/', openaiModel: 'gpt-custom' });
+  const response = await POST(request());
+  assert.equal(response.status, 200);
+  assert.equal(actualUrl, 'https://gateway.example/v1/chat/completions');
+  assert.equal(actualModel, 'gpt-custom');
+});
+
+test('falls back in GPT, Ollama, Groq order', async (t) => {
+  const calls = [];
+  setup(t, async (url) => {
+    calls.push(url);
+    return calls.length < 3 ? new Response('', { status: 503 })
+      : Response.json({ choices: [{ message: { content: JSON.stringify(review) } }] });
+  }, { openai: true });
+  const response = await POST(request());
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('X-Review-Provider'), 'groq');
+  assert.deepEqual(calls.map((url) => new URL(url).hostname), ['gms.ssafy.io', 'ollama.com', 'api.groq.com']);
+});
 
 test('falls back after 429 and exposes the successful provider', async (t) => {
   setup(t, async (url) => String(url).includes('ollama.com')

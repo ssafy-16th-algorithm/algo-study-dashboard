@@ -1,4 +1,4 @@
-export const REVIEW_VERSION=14;
+export const REVIEW_VERSION=16;
 export const SCORE_RUBRIC_VERSION=1;
 
 export const SCORE_RUBRIC = [
